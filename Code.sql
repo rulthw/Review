@@ -1,42 +1,44 @@
 create procedure syn.usp_ImportFileCustomerSeasonal
 	@Record_ID int
-AS
+as
 set nocount on
+
 begin
-	declare @RowCount int = (select count(*) from syn.SA_CustomerSeasonal)
-	declare @ErrorMessage varchar(max)
+	declare 
+		@RowCount int = (select count(*) from syn.SA_CustomerSeasonal)
+		,@ErrorMessage varchar(8000)
 
 -- Проверка на корректность загрузки
 	if not exists (
-	select 1
-	from syn.ImportFile as f
-	where f.ID = @Record_ID
-		and f.FlagLoaded = cast(1 as bit)
+		select 1
+		from syn.ImportFile as imf
+		where imf.ID = @Record_ID
+			and imf.FlagLoaded = cast(1 as bit)
 	)
-		begin
-			set @ErrorMessage = 'Ошибка при загрузке файла, проверьте корректность данных'
+	begin
+		set @ErrorMessage = 'Ошибка при загрузке файла, проверьте корректность данных'
 
-			raiserror(@ErrorMessage, 3, 1)
-			return
-		end
+		raiserror(@ErrorMessage, 3, 1)
+		return
+	end
 
-	--Чтение из слоя временных данных
+	-- Чтение из слоя временных данных
 	select
 		c.ID as ID_dbo_Customer
 		,cst.ID as ID_CustomerSystemType
 		,s.ID as ID_Season
 		,cast(cs.DateBegin as date) as DateBegin
 		,cast(cs.DateEnd as date) as DateEnd
-		,c_dist.ID as ID_dbo_CustomerDistributor
+		,cd.ID as ID_dbo_CustomerDistributor
 		,cast(isnull(cs.FlagActive, 0) as bit) as FlagActive
 	into #CustomerSeasonal
-	from syn.SA_CustomerSeasonal cs
-		join dbo.customer as c on c.UID_DS = cs.UID_DS_Customer
+	from syn.SA_CustomerSeasonal as cs
+		join dbo.Customer as c on c.UID_DS = cs.UID_DS_Customer
 			and c.ID_mapping_DataSource = 1
 		join dbo.Season as s on s.Name = cs.Season
-		join dbo.Customer as c_dist on c_dist.UID_DS = cs.UID_DS_CustomerDistributor
+		join dbo.Customer as cd on cd.UID_DS = cs.UID_DS_CustomerDistributor
 			and cd.ID_mapping_DataSource = 1
-		join syn.CustomerSystemType as cst on cs.CustomerSystemType = cst.Name
+		join syn.CustomerSystemType as cst on cst.Name = cs.CustomerSystemType
 	where try_cast(cs.DateBegin as date) is not null
 		and try_cast(cs.DateEnd as date) is not null
 		and try_cast(isnull(cs.FlagActive, 0) as bit) is not null
@@ -47,7 +49,7 @@ begin
 		cs.*
 		,case
 			when c.ID is null then 'UID клиента отсутствует в справочнике "Клиент"'
-			when c_dist.ID is null then 'UID дистрибьютора отсутствует в справочнике "Клиент"'
+			when cd.ID is null then 'UID дистрибьютора отсутствует в справочнике "Клиент"'
 			when s.ID is null then 'Сезон отсутствует в справочнике "Сезон"'
 			when cst.ID is null then 'Тип клиента отсутствует в справочнике "Тип клиента"'
 			when try_cast(cs.DateBegin as date) is null then 'Невозможно определить Дату начала'
@@ -58,10 +60,11 @@ begin
 	from syn.SA_CustomerSeasonal as cs
 	left join dbo.Customer as c on c.UID_DS = cs.UID_DS_Customer
 		and c.ID_mapping_DataSource = 1
-	left join dbo.Customer as c_dist on c_dist.UID_DS = cs.UID_DS_CustomerDistributor and c_dist.ID_mapping_DataSource = 1
+	left join dbo.Customer as cd on cd.UID_DS = cs.UID_DS_CustomerDistributor 
+		and cd.ID_mapping_DataSource = 1
 	left join dbo.Season as s on s.Name = cs.Season
 	left join syn.CustomerSystemType as cst on cst.Name = cs.CustomerSystemType
-	where cc.ID is null
+	where c.ID is null
 		or cd.ID is null
 		or s.ID is null
 		or cst.ID is null
@@ -70,7 +73,7 @@ begin
 		or try_cast(isnull(cs.FlagActive, 0) as bit) is null
 
 	-- Обработка данных из файла
-	merge into syn.CustomerSeasonal as cs
+	merge into syn.CustomerSeasonal as t
 	using (
 		select
 			cs_temp.ID_dbo_Customer
@@ -81,9 +84,9 @@ begin
 			,cs_temp.ID_dbo_CustomerDistributor
 			,cs_temp.FlagActive
 		from #CustomerSeasonal as cs_temp
-	) as s on s.ID_dbo_Customer = cs.ID_dbo_Customer
-		and s.ID_Season = cs.ID_Season
-		and s.DateBegin = cs.DateBegin
+	) as s on s.ID_dbo_Customer = t.ID_dbo_Customer
+		and s.ID_Season = t.ID_Season
+		and s.DateBegin = t.DateBegin
 	when matched
 		and t.ID_CustomerSystemType <> s.ID_CustomerSystemType then
 		update
@@ -93,8 +96,24 @@ begin
 			,ID_dbo_CustomerDistributor = s.ID_dbo_CustomerDistributor
 			,FlagActive = s.FlagActive
 	when not matched then
-		insert (ID_dbo_Customer, ID_CustomerSystemType, ID_Season, DateBegin, DateEnd, ID_dbo_CustomerDistributor, FlagActive)
-		values (s.ID_dbo_Customer, s.ID_CustomerSystemType, s.ID_Season, s.DateBegin, s.DateEnd, s.ID_dbo_CustomerDistributor, s.FlagActive)
+		insert (
+			ID_dbo_Customer
+			,ID_CustomerSystemType
+			,ID_Season
+			,DateBegin
+			,DateEnd
+			,ID_dbo_CustomerDistributor
+			,FlagActive
+		)
+		values (
+			s.ID_dbo_Customer
+			,s.ID_CustomerSystemType
+			,s.ID_Season
+			,s.DateBegin
+			,s.DateEnd
+			,s.ID_dbo_CustomerDistributor
+			,s.FlagActive
+		)
 
 	-- Информационное сообщение
 	begin
@@ -118,5 +137,4 @@ begin
 
 		return
 	end
-
 end
